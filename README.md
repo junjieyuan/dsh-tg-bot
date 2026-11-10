@@ -49,3 +49,15 @@
 - 仅私聊：不处理群组/频道；不做 Agent 路由、不创建会话。
 - 配对命令只在与机器人的私聊中生效。
 - 最近消息只保存文本（截断至 2000 字符），不保存媒体。
+
+## 开发（TypeScript）
+
+源码为 `src/index.ts`（宿主端）与 `src/client.ts`（浏览器端），用 TypeScript 编写；
+运行时的入口 `index.js` / `client.js` 是编译产物，已随仓库提交（DSH runtime 直接加载这两个文件）。
+
+- `pnpm build` — 编译并输出到包根的 `index.js` / `client.js`；
+- `pnpm typecheck` — 只做类型检查，不产出文件。
+
+修改 `src/*.ts` 后必须重新 `pnpm build`，否则 runtime 仍在运行旧的编译产物。
+注意：`client.js` 在浏览器里以普通脚本（非 ES module）加载，因此 `src/client.ts`
+不能出现真正的 import/export 语法，输出里也不能有模块标记。

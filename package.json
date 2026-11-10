@@ -18,6 +18,10 @@
     "icon.svg",
     "README.md"
   ],
+  "scripts": {
+    "build": "tsc -p tsconfig.node.json && tsc -p tsconfig.client.json",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.client.json --noEmit"
+  },
   "dependencies": {
     "zod": "4.4.3"
   },
@@ -32,5 +36,10 @@
         "@deepseek-ai/dsh-client-ui-settings-general"
       ]
     }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "typescript": "^5.9.3"
   }
 }
