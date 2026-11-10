@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Telegram Bot",
+    "description": "Connects a Telegram bot to the Harness: private-chat pairing requests, owner approval, and a user whitelist."
+  }
+}

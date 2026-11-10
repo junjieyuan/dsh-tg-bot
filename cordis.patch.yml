@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-tg-bot
+      name: '@local/dsh-tg-bot'
