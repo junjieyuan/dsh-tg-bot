@@ -2,8 +2,9 @@
  * Host half of @local/dsh-tg-bot.
  *
  * Connects to the Telegram Bot API over long polling, manages pairing
- * requests and the private-chat whitelist, and serves a small authenticated
- * HTTP API (same origin as the Web GUI) to the client half.
+ * requests and the private-chat whitelist, serves a small authenticated
+ * HTTP API (same origin as the Web GUI) to the client half, and registers
+ * the `tg_send` tool so agents can proactively message whitelisted users.
  *
  * Scope of this version: private chats only. A Telegram user starts a pairing
  * request by sending the pairing command to the bot; the owner approves it in
@@ -11,13 +12,15 @@
  * whitelisted users are acknowledged and kept in a bounded activity log.
  */
 import { z } from 'zod';
-export const inject = ['webServer', 'connection', 'credentials', 'storageDomain'];
+export const inject = ['webServer', 'connection', 'credentials', 'storageDomain', 'tools'];
 const CREDENTIAL_KEY = 'dsh-tg-bot/bot';
 const ROUTE_STATE = '/dsh-tg-bot/v1/state';
 const ROUTE_ACTION = '/dsh-tg-bot/v1/action';
 const MAX_BODY_BYTES = 64 * 1024;
 const ACTIVITY_PAGE = 50;
 const MAX_TEXT_BYTES = 2000;
+/** Telegram sendMessage plain-text limit (characters). */
+const TG_MAX_TEXT_LENGTH = 4096;
 /**
  * User-facing replies. Chinese is primary for this deployment; the pairing
  * command is interpolated from configuration.
@@ -96,7 +99,7 @@ class TelegramError extends Error {
 }
 /** Minimal Bot API client over the global fetch; errors carry code + retryAfter. */
 function makeTelegramClient(token, apiBase) {
-    return async (method, params) => {
+    return async (method, params, signal) => {
         const url = `${apiBase}/bot${token}/${method}`;
         let response;
         try {
@@ -104,6 +107,7 @@ function makeTelegramClient(token, apiBase) {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify(params),
+                ...signal !== undefined ? { signal } : {},
             });
         }
         catch (error) {
@@ -563,6 +567,84 @@ export async function apply(ctx, config) {
             }
         },
     }), 'dsh-tg-bot: POST ' + ROUTE_ACTION);
+    /**
+     * Agent-facing tool: proactively push a message to a whitelisted user.
+     * Registered globally (every session may call it); recipients are limited
+     * to the pairing whitelist, which guarantees the user already started the
+     * bot conversation.
+     */
+    const tgSendDefinition = {
+        name: 'tg_send',
+        description: 'Send a Telegram message to a whitelisted user through the connected bot. ' +
+            'Only users who completed pairing and appear in the whitelist (Settings → Telegram Bot in the Web UI) can receive messages. ' +
+            'Use it to proactively notify the user, for example when a scheduled task or a long-running job finishes.',
+        parameters: {
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    description: 'Recipient Telegram user id (numeric string) as shown next to each entry in the whitelist.',
+                },
+                text: {
+                    type: 'string',
+                    description: 'Plain-text message to deliver; at most 4096 characters.',
+                },
+            },
+            required: ['id', 'text'],
+        },
+        output: {
+            schema: {
+                type: 'object',
+                properties: {
+                    ok: { type: 'boolean', description: 'Whether the message was accepted by Telegram.' },
+                    chatId: { type: 'string', description: 'The Telegram user id the message was sent to.' },
+                },
+                required: ['ok', 'chatId'],
+            },
+            render: (_args, value) => [{ type: 'text', text: `sent to ${value.chatId}` }],
+        },
+        async execute(args, exec) {
+            const record = (typeof args === 'object' && args !== null && !Array.isArray(args))
+                ? args
+                : {};
+            const id = typeof record.id === 'string' ? record.id.trim() : '';
+            const text = typeof record.text === 'string' ? record.text : '';
+            if (id === '') {
+                throw new Error('tg_send: "id" must be a non-empty Telegram user id (numeric string)');
+            }
+            if (text.trim() === '') {
+                throw new Error('tg_send: "text" must not be empty');
+            }
+            if (text.length > TG_MAX_TEXT_LENGTH) {
+                throw new Error(`tg_send: "text" is ${text.length} characters; the Telegram limit is ${TG_MAX_TEXT_LENGTH} — split the message`);
+            }
+            if (!whitelist.has(id)) {
+                throw new Error(`tg_send: user ${id} is not in the whitelist; only paired users (Settings → Telegram Bot → whitelist) can receive messages`);
+            }
+            const tg = activeTg;
+            if (tg === null) {
+                throw new Error('tg_send: the bot is not connected; save the bot token in Settings → Telegram Bot first');
+            }
+            const controller = new AbortController();
+            const onAbort = () => { controller.abort(); };
+            exec.signal.addEventListener('abort', onAbort, { once: true });
+            try {
+                await tg('sendMessage', { chat_id: id, text }, controller.signal);
+            }
+            catch (error) {
+                if (!exec.signal.aborted) {
+                    throw new Error(`tg_send: Telegram rejected the message: ${errorMessage(error)}`);
+                }
+                throw error;
+            }
+            finally {
+                exec.signal.removeEventListener('abort', onAbort);
+            }
+            log(`sent message to ${id} (${text.length} chars)`);
+            return { ok: true, chatId: id };
+        },
+    };
+    ctx.tools.register(tgSendDefinition);
     ctx.effect(() => () => {
         generation += 1;
     }, 'dsh-tg-bot: stop polling');
