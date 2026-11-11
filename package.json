@@ -2,6 +2,7 @@
   "name": "@local/dsh-tg-bot",
   "version": "1.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Telegram Bot bridge for DeepSeek Harness: private-chat pairing requests, owner approval, user whitelist, and the tg_send tool so agents can proactively message whitelisted users.",
   "type": "module",
   "exports": {
